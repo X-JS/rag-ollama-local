@@ -1,0 +1,31 @@
+[project]
+name = "rag-ollama-local"
+version = "0.1.0"
+description = "本地私有化 RAG 知识库（Ollama + LangChain + Chroma）"
+readme = "README.md"
+authors = [
+    { name = "js", email = "493994160@qq.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "chromadb>=1.5.9",
+    "gradio>=6.26.0",
+    "langchain>=0.3,<0.4",
+    "langchain-community>=0.3,<0.4",
+    "langchain-core>=0.3,<0.4",
+    "langchain-text-splitters>=0.3,<0.4",
+    "openpyxl>=3.1.5",
+    "pymupdf>=1.28.2",
+    "pytesseract>=0.3.13",
+    "python-docx>=1.2.0",
+    "unstructured>=0.27.5",
+]
+
+[project.scripts]
+rag-ollama-local = "rag_ollama_local:main"
+rag-ollama-build = "rag_ollama_local.load_data_to_db:main"
+rag-ollama-qa = "rag_ollama_local.knowledge_qa:main"
+
+[build-system]
+requires = ["uv_build>=0.12.1,<0.13.0"]
+build-backend = "uv_build"
