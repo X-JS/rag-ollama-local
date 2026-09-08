@@ -34,10 +34,10 @@ def _current_log() -> str:
 
 # 双模式提示词：资料相关→RAG增强并标来源；资料缺失/无关→正常对话
 PROMPT_TEMPLATE = """你是电子产品行业专业知识库助手，请严格遵守以下规则：
-1. 下面给出的是知识库中检索到的相关片段。如果片段与你的问题相关，请优先依据这些片段作答，分点说明，每一条结论尽量标注对应的参考文档；
+1. 下面给出的是知识库中检索到的相关片段，每个片段开头都标注了「来源文件」。如果片段与你的问题相关，请优先依据这些片段作答，分点说明，每一条结论尽量标注对应的来源文件名；
 2. 如果检索不到相关资料，或这些片段与问题无关：请用你自身的知识正常回答（可以正常闲聊、对话），但不要谎称引用了资料，也不要在回答中编造来源；
 3. 严禁编造检索片段中不存在的术语、工况、标准编号；
-4. 回答严谨、专业、结构清晰。若引用了资料，请在结尾列出参考来源。
+4. 回答严谨、专业、结构清晰。不要在回答结尾自行罗列「参考来源」清单，系统会在末尾自动追加去重后的来源。
 
 ### 知识库检索片段：
 {context}
@@ -72,7 +72,7 @@ def _extract_sources(docs):
     """去重提取来源文件名（兼容 source / source_file 元数据）"""
     names, seen = [], set()
     for d in docs:
-        src = d.metadata.get("source") or d.metadata.get("source_file") or "未知文件"
+        src = d.metadata.get("source_file") or d.metadata.get("source") or "未知文件"
         if src not in seen:
             seen.add(src)
             names.append(src)
@@ -115,7 +115,11 @@ def chat_answer(question):
     if valid_docs:
         # ==========检索到有效文档，走RAG流程==========
         _log("命中知识库：走 RAG 增强问答")
-        context = "\n".join([f"{i + 1}. {d.page_content}" for i, d in enumerate(valid_docs)])
+        # 每个片段开头标注来源文件名，供 LLM 行内引用（同一文件的多个片段文件名相同）
+        context = "\n\n".join(
+            f"[片段{i + 1}｜来源文件：{d.metadata.get('source_file') or d.metadata.get('source') or '未知文件'}]\n{d.page_content}"
+            for i, d in enumerate(valid_docs)
+        )
         prompt = PromptTemplate(template=PROMPT_TEMPLATE, input_variables=["context", "question"])
         prompt_text = prompt.format(context=context, question=question)
         _log("开始流式生成回答…")
@@ -133,6 +137,15 @@ def chat_answer(question):
         for chunk in llm.stream(question):
             answer += chunk
             yield answer, _current_log()
+
+    if valid_docs:
+        # 参考来源由程序按文件名去重后统一追加，避免 LLM 把正文里的公司名重复罗列
+        sources = _extract_sources(valid_docs)
+        if sources:
+            answer = answer.rstrip() + "\n\n参考来源：\n" + "\n".join(
+                f"{i + 1}. {name}" for i, name in enumerate(sources)
+            )
+            _log(f"追加去重后的参考来源 {len(sources)} 条")
 
     _log("回答生成完成")
     yield answer.strip(), _current_log()

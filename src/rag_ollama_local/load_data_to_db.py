@@ -1,3 +1,4 @@
+import hashlib
 from typing import List
 from langchain_community.document_loaders import (
     PyPDFLoader,
@@ -108,18 +109,35 @@ def deduplicate_chunks(chunks: List[Document]) -> List[Document]:
     return clean
 
 
+def _chunk_id(doc: Document) -> str:
+    """以『来源文件 + 内容哈希』为稳定 ID，重复执行脚本可幂等更新"""
+    digest = hashlib.md5(doc.page_content.encode("utf-8")).hexdigest()
+    return f"{doc.metadata.get('source_file', 'unknown')}::{digest}"
+
+
 def update_single_vector_db(split_docs: List[Document]):
-    """单库统一增量更新，所有文档全部入库"""
+    """单库统一增量更新，按内容哈希幂等写入，避免重复切片"""
+    ids = [_chunk_id(d) for d in split_docs]
     if DB_DIR.exists() and any(DB_DIR.iterdir()):
-        print(f"\n🔄 检测到已有单向量库，增量追加 {len(split_docs)} 条切片")
         db = Chroma(persist_directory=str(DB_DIR), embedding_function=embeddings)
-        db.add_documents(split_docs)
+        existing = set(db.get(ids=ids)["ids"])
+        new_docs, new_ids = [], []
+        for d, i in zip(split_docs, ids):
+            if i not in existing:
+                new_docs.append(d)
+                new_ids.append(i)
+        if new_docs:
+            db.add_documents(new_docs, ids=new_ids)
+            print(f"\n🔄 增量追加 {len(new_docs)} 条切片，跳过重复 {len(split_docs) - len(new_docs)} 条")
+        else:
+            print(f"\n🔄 无新增内容，跳过写入（共 {len(split_docs)} 条均已存在）")
     else:
         print(f"\n🆕 首次创建统一向量库，写入 {len(split_docs)} 条切片")
         db = Chroma.from_documents(
             documents=split_docs,
             embedding=embeddings,
-            persist_directory=str(DB_DIR)
+            persist_directory=str(DB_DIR),
+            ids=ids
         )
     db.persist()
     return db
